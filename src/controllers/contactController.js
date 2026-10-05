@@ -1,6 +1,8 @@
 const Contact = require('../models/contactModel');
 const mongoose = require('mongoose');
 const { TELECALLER_ROLE } = require('../constants/staffRoles');
+const { assignTelecallerToContact, autoAssignLeadWorkflowTasks } = require('../utils/roundRobinAssignment');
+const { ensureDistrict } = require('../utils/districtHelpers');
 
 // @desc    Get all contacts (Admin gets all owned, telecaller gets assigned)
 // @route   GET /api/contacts
@@ -11,7 +13,7 @@ const getContacts = async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 50;
     const skip = (page - 1) * limit;
 
-    let query = {};
+    let query = { status: { $ne: 'Converted' } };
     if (req.user.role === 'admin') {
       query.owner = req.user._id;
     } else {
@@ -175,7 +177,9 @@ const createContact = async (req, res) => {
       ]
     });
     const createdContact = await contact.save();
+    await assignTelecallerToContact(createdContact, req.user._id);
     const populatedContact = await Contact.findById(createdContact._id)
+      .populate('assignedTo', 'name email phone role')
       .populate('createdBy', 'name role')
       .populate('updatedBy', 'name role')
       .populate('referredByStaff', 'name')
@@ -249,7 +253,10 @@ const bulkCreateContacts = async (req, res) => {
       }
 
       const createdContacts = await Contact.insertMany(finalContactsToInsert, { ordered: false });
-      
+      for (const c of createdContacts) {
+        await assignTelecallerToContact(c, req.user._id);
+      }
+
       if (finalContactsToInsert.length < formattedContacts.length) {
         return res.status(201).json({
           message: `Inserted ${finalContactsToInsert.length} contacts successfully. Skipped ${formattedContacts.length - finalContactsToInsert.length} duplicates.`,
@@ -260,6 +267,9 @@ const bulkCreateContacts = async (req, res) => {
       res.status(201).json(createdContacts);
     } catch (insertError) {
       if (insertError.name === 'BulkWriteError' && insertError.insertedDocs) {
+        for (const c of insertError.insertedDocs) {
+          await assignTelecallerToContact(c, req.user._id);
+        }
         return res.status(201).json({
           message: `Inserted ${insertError.insertedDocs.length} out of ${formattedContacts.length} contacts successfully. Some failed validation or were duplicates.`,
           createdContacts: insertError.insertedDocs
@@ -373,8 +383,17 @@ const convertContactToLead = async (req, res) => {
     const { 
       solarCapacity, roofType, propertyType, remarks, name, phone, address,
       monthlyBill, email, consumerNumber, quotationAmount, technicalRemarks, companyName, companyAddress, gstNumber,
-      personalInfo, source, referredByStaff, referredByCustomer, paymentMode, assignedTo
+      personalInfo, source, referredByStaff, referredByCustomer, paymentMode, assignedTo, district
     } = req.body;
+
+    const ownerId = req.user.role === 'admin' ? req.user._id : req.user.owner;
+    let leadDistrict = district?.trim() || '';
+    if (!leadDistrict) {
+      return res.status(400).json({
+        message: 'District is required when converting a lead so workflow tasks can be auto-assigned.',
+      });
+    }
+    leadDistrict = await ensureDistrict(ownerId, leadDistrict);
 
     const lead = new Lead({
       name: name || contact.name,
@@ -396,9 +415,10 @@ const convertContactToLead = async (req, res) => {
       referredByStaff: referredByStaff || contact.referredByStaff || null,
       referredByCustomer: referredByCustomer || contact.referredByCustomer || null,
       paymentMode: paymentMode || contact.paymentMode || 'Direct',
+      district: leadDistrict,
       assignedTo: assignedTo || null, // initially unassigned unless explicitly passed
       createdBy: req.user._id,
-      owner: req.user.role === 'admin' ? req.user._id : req.user.owner,
+      owner: ownerId,
       history: [
         {
           status: 'New',
@@ -409,6 +429,7 @@ const convertContactToLead = async (req, res) => {
     });
 
     const createdLead = await lead.save();
+    const assignResult = await autoAssignLeadWorkflowTasks(createdLead, req.user._id);
 
     contact.status = 'Converted';
     if (remarks) {
@@ -423,10 +444,24 @@ const convertContactToLead = async (req, res) => {
     });
     await contact.save();
 
+    let message = 'Contact converted to Lead successfully';
+    if (assignResult.assigned === 0) {
+      if (assignResult.reason === 'no_district') {
+        message += '. Workflow tasks were not auto-assigned: district is required.';
+      } else if (assignResult.reason === 'no_staff') {
+        message += `. Workflow tasks were not auto-assigned: no active staff for role (${assignResult.taskTitle || 'first task'}).`;
+      } else if (assignResult.reason === 'no_task_types') {
+        message += '. No task types configured — add task types under Task Management.';
+      }
+    } else {
+      message += `. First workflow task "${assignResult.taskTitle}" assigned to ${assignResult.staffName}.`;
+    }
+
     res.status(201).json({
-      message: 'Contact converted to Lead successfully',
+      message,
       lead: createdLead,
-      contact
+      contact,
+      workflowAssignment: assignResult,
     });
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -642,12 +677,13 @@ const handleGoogleFormWebhook = async (req, res) => {
       phone,
       email,
       address,
-      status: 'Open(Not Assigned Yet)',
+      status: 'New',
       source: 'Digital',
       remarks,
       owner: ownerId,
       createdBy: ownerId
     });
+    await assignTelecallerToContact(contact, ownerId);
 
     res.status(201).json({ message: 'Success', contact });
   } catch (error) {

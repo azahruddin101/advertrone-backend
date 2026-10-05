@@ -1,5 +1,6 @@
 const Task = require('../models/taskModel');
 const { LEAD_STAFF_ROLES, isLeadStaffRole } = require('../constants/staffRoles');
+const { taskCatalogSort } = require('../utils/taskCatalogSort');
 
 const getOwnerId = (user) => (user.role === 'admin' ? user._id : user.owner);
 
@@ -21,8 +22,30 @@ const getTasks = async (req, res) => {
       query.responsibleStaff = req.user.role;
     }
 
+    if (req.user.role === 'admin') {
+      const catalog = await Task.find({ owner: ownerId }).sort({ createdAt: 1 });
+      const needsOrder = catalog.some(
+        (t) => typeof t.sortOrder !== 'number' || t.sortOrder < 1
+      );
+      if (catalog.length > 0 && needsOrder) {
+        const sorted = [...catalog].sort(
+          (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
+        );
+        await Promise.all(
+          sorted.map((task, index) => {
+            if (typeof task.sortOrder === 'number' && task.sortOrder >= 1) {
+              return Promise.resolve();
+            }
+            task.sortOrder = index + 1;
+            return task.save();
+          })
+        );
+      }
+    }
+
     const tasks = await Task.find(query)
-      .sort({ createdAt: 1 })
+      .select('title description responsibleStaff sortOrder owner createdBy createdAt updatedAt')
+      .sort(taskCatalogSort)
       .populate('createdBy', 'name');
 
     res.json(tasks);
@@ -36,7 +59,7 @@ const getTasks = async (req, res) => {
 // @access  Private/Admin
 const createTask = async (req, res) => {
   try {
-    const { title, description, responsibleStaff } = req.body;
+    const { title, description, responsibleStaff, sortOrder } = req.body;
     const ownerId = req.user._id;
 
     if (!title?.trim() || !responsibleStaff) {
@@ -47,15 +70,23 @@ const createTask = async (req, res) => {
       return res.status(400).json({ message: 'Invalid responsible staff role' });
     }
 
+    const order = Number(sortOrder);
+    if (!Number.isFinite(order) || order < 1) {
+      return res.status(400).json({ message: 'Order is required and must be a number of 1 or higher' });
+    }
+
     const task = await Task.create({
       title: title.trim(),
       description: description?.trim() || '',
       responsibleStaff,
+      sortOrder: order,
       owner: ownerId,
       createdBy: req.user._id,
     });
 
-    const populated = await Task.findById(task._id).populate('createdBy', 'name');
+    const populated = await Task.findById(task._id)
+      .select('title description responsibleStaff sortOrder owner createdBy createdAt updatedAt')
+      .populate('createdBy', 'name');
 
     res.status(201).json(populated);
   } catch (error) {
@@ -79,10 +110,18 @@ const updateTask = async (req, res) => {
       return res.status(401).json({ message: 'Not authorized to update this task type' });
     }
 
-    const { title, description, responsibleStaff } = req.body;
+    const { title, description, responsibleStaff, sortOrder } = req.body;
 
     if (title !== undefined) task.title = title.trim();
     if (description !== undefined) task.description = description.trim();
+
+    if (sortOrder !== undefined) {
+      const order = Number(sortOrder);
+      if (!Number.isFinite(order) || order < 1) {
+        return res.status(400).json({ message: 'Order must be a positive number' });
+      }
+      task.sortOrder = order;
+    }
 
     if (responsibleStaff !== undefined) {
       if (!LEAD_STAFF_ROLES.includes(responsibleStaff)) {
@@ -93,7 +132,9 @@ const updateTask = async (req, res) => {
 
     await task.save();
 
-    const populated = await Task.findById(task._id).populate('createdBy', 'name');
+    const populated = await Task.findById(task._id)
+      .select('title description responsibleStaff sortOrder owner createdBy createdAt updatedAt')
+      .populate('createdBy', 'name');
 
     res.json(populated);
   } catch (error) {

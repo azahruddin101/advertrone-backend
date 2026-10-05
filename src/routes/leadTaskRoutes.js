@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const LeadTask = require('../models/leadTaskModel');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, admin } = require('../middleware/authMiddleware');
+const { getWorkflowSummary } = require('../controllers/leadTaskController');
 const { getOwnerId } = require('../utils/leadAccess');
 
 // @desc    Pending workflow tasks assigned to current user
@@ -28,5 +29,7 @@ router.get('/my-work', protect, async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
+router.get('/summary', protect, admin, getWorkflowSummary);
 
 module.exports = router;

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createLead, getLeads, getLeadById, updateLead, logPhoneView, createPublicReferral, handleGoogleFormWebhook } = require('../controllers/leadController');
+const { createLead, getLeads, getLeadById, updateLead, deleteLead, logPhoneView, createPublicReferral, handleGoogleFormWebhook } = require('../controllers/leadController');
 const {
   getLeadWorkflowTasks,
   assignLeadWorkflowTask,
@@ -28,7 +28,8 @@ router.patch('/:id/tasks/:leadTaskId/complete', protect, completeLeadWorkflowTas
 
 router.route('/:id')
   .get(protect, getLeadById)
-  .patch(protect, updateLead);
+  .patch(protect, updateLead)
+  .delete(protect, admin, deleteLead);
 
 router.post('/:id/log-view-phone', protect, logPhoneView);
 

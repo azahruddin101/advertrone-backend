@@ -5,7 +5,7 @@ const getOwnerId = (user) => (user.role === 'admin' ? user._id : user.owner);
 
 // @desc    Get all districts for the organization
 // @route   GET /api/districts
-// @access  Private/Admin
+// @access  Private
 const getDistricts = async (req, res) => {
   try {
     const ownerId = getOwnerId(req.user);

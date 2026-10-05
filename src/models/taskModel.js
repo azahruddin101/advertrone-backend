@@ -18,6 +18,12 @@ const taskSchema = mongoose.Schema(
       required: true,
       enum: LEAD_STAFF_ROLES,
     },
+    /** Workflow sequence: lower numbers are assigned first */
+    sortOrder: {
+      type: Number,
+      required: [true, 'Order is required'],
+      min: [1, 'Order must be at least 1'],
+    },
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -32,7 +38,7 @@ const taskSchema = mongoose.Schema(
   { timestamps: true }
 );
 
-taskSchema.index({ owner: 1, createdAt: 1 });
+taskSchema.index({ owner: 1, sortOrder: 1, createdAt: 1 });
 
 const Task = mongoose.model('Task', taskSchema);
 

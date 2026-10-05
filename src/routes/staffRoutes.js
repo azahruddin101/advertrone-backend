@@ -24,7 +24,7 @@ router.route('/roles')
   .get(protect, getStaffRoles);
 
 router.route('/districts')
-  .get(protect, admin, getDistricts)
+  .get(protect, getDistricts)
   .post(protect, admin, addDistrict);
 
 router.route('/:id')

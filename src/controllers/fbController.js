@@ -1,6 +1,7 @@
 const User = require('../models/userModel');
 const Lead = require('../models/leadModel');
 const Contact = require('../models/contactModel');
+const { assignTelecallerToContact } = require('../utils/roundRobinAssignment');
 
 // Webhook Verification (GET /api/leads/facebook/webhook)
 exports.verifyWebhook = (req, res) => {
@@ -153,6 +154,7 @@ exports.receiveWebhook = async (req, res) => {
                 createdBy: admin._id,
                 status: 'New'
               });
+              await assignTelecallerToContact(newLead, admin._id);
 
               console.log(`Successfully ingested Facebook Lead: ${name} (ID: ${newLead._id}) for Admin: ${admin.name}`);
             } catch (apiErr) {

@@ -1,7 +1,10 @@
 const Lead = require('../models/leadModel');
 const Notification = require('../models/notificationModel');
+const LeadTask = require('../models/leadTaskModel');
 const { getLeadIfAccessible } = require('../utils/leadAccess');
 const { syncLeadWorkflowTasks } = require('../utils/leadWorkflow');
+const { autoAssignLeadWorkflowTasks, startLeadWorkflowIfNotStarted } = require('../utils/roundRobinAssignment');
+const { ensureDistrict } = require('../utils/districtHelpers');
 
 // Uploaded documents are stored as base64 inside the lead (several MB each), so list and
 // update responses leave the file contents out; GET /api/leads/:id returns them in full.
@@ -46,15 +49,22 @@ const restoreFileContents = (incoming, existing) => {
 // @route   POST /api/leads
 // @access  Private
 const createLead = async (req, res) => {
-  const { name, email, consumerNumber, phone, address, monthlyBill, solarCapacity, roofType, propertyType, source, assignedTo, personalInfo, referredByStaff, referredByCustomer, paymentMode } = req.body;
+  const { name, email, consumerNumber, phone, address, district, monthlyBill, solarCapacity, roofType, propertyType, source, assignedTo, personalInfo, referredByStaff, referredByCustomer, paymentMode } = req.body;
 
   try {
+    const ownerId = req.user.role === 'admin' ? req.user._id : req.user.owner;
+    let leadDistrict = district?.trim() || '';
+    if (leadDistrict) {
+      leadDistrict = await ensureDistrict(ownerId, leadDistrict);
+    }
+
     const lead = await Lead.create({
       name,
       email,
       consumerNumber: consumerNumber || '',
       phone,
       address,
+      district: leadDistrict,
       monthlyBill: monthlyBill || '0-1000',
       solarCapacity,
       roofType,
@@ -66,10 +76,11 @@ const createLead = async (req, res) => {
       personalInfo,
       assignedTo: assignedTo || req.user._id,
       createdBy: req.user._id,
-      owner: req.user.role === 'admin' ? req.user._id : req.user.owner,
+      owner: ownerId,
     });
 
     await syncLeadWorkflowTasks(lead._id, lead.owner);
+    await autoAssignLeadWorkflowTasks(lead, req.user._id);
     res.status(201).json(lead);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -237,7 +248,7 @@ const updateLead = async (req, res) => {
       }
 
       // Check if staff is authorized to update this lead
-      if (req.user.role !== 'admin' && lead.assignedTo.toString() !== req.user._id.toString()) {
+      if (req.user.role !== 'admin' && lead.assignedTo?.toString() !== req.user._id.toString()) {
         return res.status(401).json({ message: 'Not authorized to update this lead' });
       }
 
@@ -264,6 +275,14 @@ const updateLead = async (req, res) => {
       }
       lead.phone = req.body.phone || lead.phone;
       lead.address = req.body.address || lead.address;
+      if (req.body.district !== undefined) {
+        const ownerId = lead.owner;
+        let leadDistrict = req.body.district?.trim() || '';
+        if (leadDistrict) {
+          leadDistrict = await ensureDistrict(ownerId, leadDistrict);
+        }
+        lead.district = leadDistrict;
+      }
       lead.monthlyBill = req.body.monthlyBill || lead.monthlyBill || '0-1000';
       lead.solarCapacity = req.body.solarCapacity || lead.solarCapacity;
       lead.roofType = req.body.roofType || lead.roofType;
@@ -308,6 +327,11 @@ const updateLead = async (req, res) => {
 
       const updatedLead = await lead.save();
 
+      // District just set on a lead whose workflow has not begun: assign the first task now
+      if (req.body.district !== undefined && updatedLead.district) {
+        await startLeadWorkflowIfNotStarted(updatedLead, req.user._id);
+      }
+
       // Create notification for follow-up
       if (isNewFollowUp) {
         const followDate = new Date(req.body.followUpDate);
@@ -340,6 +364,46 @@ const updateLead = async (req, res) => {
     }
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+};
+
+// @desc    Delete a lead and its workflow tasks
+// @route   DELETE /api/leads/:id
+// @access  Private/Admin
+const deleteLead = async (req, res) => {
+  try {
+    const lead = await Lead.findOne({ _id: req.params.id, owner: req.user._id }).select('_id name');
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found' });
+    }
+
+    // Quotations, invoices and payments are business records; a lead that has any is kept
+    const Quotation = require('../models/quotationModel');
+    const Invoice = require('../models/invoiceModel');
+    const Payment = require('../models/paymentModel');
+    const [quotations, invoices, payments] = await Promise.all([
+      Quotation.countDocuments({ lead: lead._id }),
+      Invoice.countDocuments({ lead: lead._id }),
+      Payment.countDocuments({ leadId: lead._id }),
+    ]);
+    const linked = [
+      quotations && `${quotations} quotation${quotations > 1 ? 's' : ''}`,
+      invoices && `${invoices} invoice${invoices > 1 ? 's' : ''}`,
+      payments && `${payments} payment${payments > 1 ? 's' : ''}`,
+    ].filter(Boolean);
+    if (linked.length) {
+      return res.status(400).json({
+        message: `This lead has ${linked.join(', ')} and cannot be deleted.`,
+      });
+    }
+
+    await LeadTask.deleteMany({ lead: lead._id });
+    await Notification.deleteMany({ relatedId: lead._id });
+    await lead.deleteOne();
+
+    res.json({ message: 'Lead deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -383,6 +447,7 @@ module.exports = {
   getLeads, 
   getLeadById,
   updateLead, 
+  deleteLead,
   logPhoneView,
   createPublicReferral,
   handleGoogleFormWebhook

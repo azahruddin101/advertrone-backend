@@ -21,6 +21,10 @@ const leadSchema = mongoose.Schema(
       type: String,
       required: true,
     },
+    district: {
+      type: String,
+      default: '',
+    },
     monthlyBill: {
       type: String,
       enum: ['0-1000', '1001-3000', '3001-5000', '5000+', 'Below 1800 rs', '1800- 3000', '3000-5000', 'Above 5000'],

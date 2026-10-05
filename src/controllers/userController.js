@@ -189,7 +189,7 @@ const toggleStaffStatus = async (req, res) => {
 // @access  Private/Admin
 const updateStaff = async (req, res) => {
   try {
-    const { name, email, phone, role, password } = req.body;
+    const { name, email, phone, role, password, district } = req.body;
     const user = await User.findById(req.params.id);
 
     if (!user) {
@@ -217,6 +217,14 @@ const updateStaff = async (req, res) => {
     if (phone) user.phone = phone;
     if (role) user.role = role;
 
+    if (district !== undefined) {
+      let districtValue = district ? district.toString().trim() : '';
+      if (districtValue) {
+        districtValue = await ensureDistrict(req.user._id, districtValue);
+      }
+      user.district = districtValue;
+    }
+
     if (password && password.toString().trim() !== '') {
       user.password = password.toString().trim();
       user.tokenVersion = (user.tokenVersion || 0) + 1;
@@ -232,6 +240,7 @@ const updateStaff = async (req, res) => {
         email: user.email,
         phone: user.phone,
         role: user.role,
+        district: user.district,
         status: user.status
       }
     });
