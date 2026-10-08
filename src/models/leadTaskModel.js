@@ -49,6 +49,13 @@ const leadTaskSchema = mongoose.Schema(
       type: String,
       default: '',
     },
+    attachments: [
+      {
+        url: { type: String, required: true },
+        name: { type: String, default: '', trim: true },
+        mimeType: { type: String, default: '' },
+      },
+    ],
     completedAt: {
       type: Date,
     },

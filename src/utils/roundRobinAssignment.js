@@ -193,6 +193,7 @@ const assignLeadTask = async ({
         status: 'pending',
         remark: '',
         photoUrl: '',
+        attachments: [],
         completedAt: null,
         completedBy: null,
       },

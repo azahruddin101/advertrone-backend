@@ -18,6 +18,58 @@ const formatWorkflowItem = (taskType, leadTask) => ({
   status: leadTask?.status || 'unassigned',
 });
 
+const ALLOWED_ATTACHMENT_EXT = new Set([
+  'jpg',
+  'jpeg',
+  'png',
+  'gif',
+  'webp',
+  'heic',
+  'heif',
+  'bmp',
+  'pdf',
+  'xls',
+  'xlsx',
+]);
+
+const extensionOf = (value) => {
+  const clean = String(value || '').split('?')[0].split('#')[0];
+  const base = clean.split('/').pop() || '';
+  const dot = base.lastIndexOf('.');
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : '';
+};
+
+const normalizeAttachments = (attachments, photoUrl) => {
+  const source = Array.isArray(attachments) ? attachments : [];
+  const files = source
+    .filter((file) => file && typeof file.url === 'string' && file.url.trim().startsWith('/uploads/'))
+    .slice(0, 20)
+    .map((file) => {
+      const url = file.url.trim();
+      const urlExt = extensionOf(url);
+      if (!ALLOWED_ATTACHMENT_EXT.has(urlExt)) return null;
+      const rawName = String(file.name || '')
+        .trim()
+        .replace(/[\\/]/g, '')
+        .slice(0, 180);
+      const nameExt = extensionOf(rawName);
+      const base = rawName ? rawName.replace(/\.[^.]+$/, '').trim() : '';
+      const name = `${base || 'file'}.${ALLOWED_ATTACHMENT_EXT.has(nameExt) ? nameExt : urlExt}`;
+      return {
+        url,
+        name,
+        mimeType: String(file.mimeType || '').slice(0, 120),
+      };
+    })
+    .filter(Boolean);
+
+  if (!files.length && typeof photoUrl === 'string' && photoUrl.trim().startsWith('/uploads/')) {
+    files.push({ url: photoUrl.trim(), name: 'Photo.jpg', mimeType: 'image/jpeg' });
+  }
+
+  return files;
+};
+
 // @desc    Get workflow tasks for a lead (all catalog task types)
 // @route   GET /api/leads/:id/tasks
 // @access  Private
@@ -157,7 +209,7 @@ const completeLeadWorkflowTask = async (req, res) => {
       return res.status(404).json({ message: 'Lead not found' });
     }
 
-    const { remark, photoUrl } = req.body;
+    const { remark, photoUrl, attachments } = req.body;
 
     const leadTask = await LeadTask.findOne({
       _id: req.params.leadTaskId,
@@ -185,9 +237,13 @@ const completeLeadWorkflowTask = async (req, res) => {
       }
     }
 
+    const files = normalizeAttachments(attachments, photoUrl);
+    const firstImage = files.find((file) => String(file.mimeType).startsWith('image/')) || files[0];
+
     leadTask.status = 'done';
     leadTask.remark = remark?.trim() || '';
-    leadTask.photoUrl = photoUrl?.trim() || '';
+    leadTask.attachments = files;
+    leadTask.photoUrl = firstImage?.url || '';
     leadTask.completedAt = new Date();
     leadTask.completedBy = req.user._id;
     await leadTask.save();

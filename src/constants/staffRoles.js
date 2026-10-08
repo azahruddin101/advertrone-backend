@@ -8,6 +8,9 @@ const STAFF_ROLE_DEFINITIONS = [
   { value: 'net_metering', label: 'Net Metering' },
   { value: 'local_marketing', label: 'Local Marketing' },
   { value: 'telecaller', label: 'Lead Relationship Manager' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'field_executive', label: 'Field Executive' },
+  { value: 'godown_incharge', label: 'Godown Incharge' },
 ];
 
 const STAFF_MEMBER_ROLES = STAFF_ROLE_DEFINITIONS.map((d) => d.value);
