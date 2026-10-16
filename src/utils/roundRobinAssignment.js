@@ -142,6 +142,10 @@ const syncLeadWithTaskAssignment = async ({
   }
   if (lead.status === LEAD_OPEN_STATUS) set.status = 'Assigned';
 
+  const involvedIds = [staff._id];
+  if (lead.assignedTo) involvedIds.push(lead.assignedTo);
+  if (previousHolderId) involvedIds.push(previousHolderId);
+
   const update = {
     $push: {
       history: {
@@ -150,6 +154,9 @@ const syncLeadWithTaskAssignment = async ({
         updatedBy: assignedById,
         updatedAt: new Date(),
       },
+    },
+    $addToSet: {
+      staffInvolved: { $each: involvedIds.filter(Boolean) },
     },
   };
   if (Object.keys(set).length) update.$set = set;

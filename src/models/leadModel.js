@@ -101,6 +101,13 @@ const leadSchema = mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
+    /** Staff who were ever assigned this lead (lead owner or any workflow step); used for list visibility */
+    staffInvolved: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -203,8 +210,17 @@ leadSchema.pre('save', async function () {
         updatedBy: this.createdBy
       });
     }
+    const initialStaff = [this.assignedTo, this.createdBy].filter(Boolean);
+    if (initialStaff.length) {
+      this.staffInvolved = [...new Set([...(this.staffInvolved || []).map(String), ...initialStaff.map((id) => id.toString())])];
+    }
   } else if (this.isModified('assignedTo')) {
     if (this.assignedTo) {
+      const id = this.assignedTo.toString();
+      const existing = (this.staffInvolved || []).map((x) => x.toString());
+      if (!existing.includes(id)) {
+        this.staffInvolved = [...existing, id];
+      }
       if (this.status === 'Open(Not Assigned Yet)') {
         this.status = 'Assigned';
         this.history.push({
@@ -227,6 +243,7 @@ leadSchema.pre('save', async function () {
 });
 
 leadSchema.index({ owner: 1, assignedTo: 1 });
+leadSchema.index({ owner: 1, staffInvolved: 1 });
 
 const Lead = mongoose.model('Lead', leadSchema);
 

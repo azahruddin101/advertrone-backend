@@ -1,7 +1,7 @@
 const Lead = require('../models/leadModel');
 const Notification = require('../models/notificationModel');
 const LeadTask = require('../models/leadTaskModel');
-const { getLeadIfAccessible } = require('../utils/leadAccess');
+const { getLeadIfAccessible, getStaffLeadListFilter } = require('../utils/leadAccess');
 const { syncLeadWorkflowTasks } = require('../utils/leadWorkflow');
 const { autoAssignLeadWorkflowTasks, startLeadWorkflowIfNotStarted } = require('../utils/roundRobinAssignment');
 const { ensureDistrict } = require('../utils/districtHelpers');
@@ -186,11 +186,9 @@ const handleGoogleFormWebhook = async (req, res) => {
 // @access  Private
 const getLeads = async (req, res) => {
   try {
-    let query = { owner: req.user.role === 'admin' ? req.user._id : req.user.owner };
-
-    // If not admin, only show assigned leads
-    if (req.user.role !== 'admin') {
-      query.assignedTo = req.user._id;
+    const query = await getStaffLeadListFilter(req.user);
+    if (!query) {
+      return res.json([]);
     }
 
     const leads = await Lead.find(query)
